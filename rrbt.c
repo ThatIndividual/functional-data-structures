@@ -2,11 +2,12 @@
 #include <stdlib.h>
 #include <stdbool.h>
 
-#define BRANCH_FACTOR 2
+#define BRANCH_FACTOR 8
 #define SHIFT_MASK 0b11
 
 typedef struct Tree Tree;
-typedef struct Node Node;
+typedef struct Branch Branch;
+typedef struct Leaf Leaf;
 
 struct Tree
 {
@@ -15,12 +16,28 @@ struct Tree
     void *root;
 };
 
-struct Node
+Tree *TreeNew(void);
+void  TreeHeighten(Tree *tree);
+void  TreePush(Tree *tree, int value);
+
+struct Branch
 {
     int length;
     int size_table[BRANCH_FACTOR];
     void *slots[BRANCH_FACTOR];
 };
+
+Branch *BranchNew(void);
+bool  BranchPush(Branch *branch, int height, int value);
+
+struct Leaf
+{
+    int length;
+    int *slots;
+};
+
+Leaf *LeafNew(void);
+bool  LeafPush(Leaf *leaf, int value);  
 
 /* UTIL */
 
@@ -30,85 +47,77 @@ shift_index(int index, int shift_by)
     return (index >> (BRANCH_FACTOR * shift_by)) & SHIFT_MASK;
 }
 
+void *
+NodeNew(int height)
+{
+    return height ? (void *)BranchNew() : (void *)LeafNew();
+}
+
+bool
+NodePush(void *child, int height, int value)
+{
+    return height ? BranchPush(child, height, value) : LeafPush(child, value);
+}
+
 /* LEAF */
 
-int *
+Leaf *
 LeafNew(void)
 {
-    return malloc(sizeof(int) * BRANCH_FACTOR);
+    Leaf *leaf;
+
+    leaf = malloc(sizeof(Leaf));
+    leaf->length = 0;
+    leaf->slots = malloc(sizeof(int) * BRANCH_FACTOR);
+
+    return leaf;
 }
 
-int
-LeafGet(int *leaf, int index)
+bool
+LeafPush(Leaf *leaf, int value)
 {
-    return leaf[shift_index(index, 0)];
-}
+    int len = leaf->length;
 
-void
-LeafSet(int *leaf, int index, int value)
-{
-    leaf[index] = value;
+    if (leaf->length != BRANCH_FACTOR)
+    {
+        leaf->slots[leaf->length] = value;
+        leaf->length++;
+        return true;
+    }
+    else /* No space left in leaf */
+        return false;
 }
 
 /* NODE */
 
-Node *
-NodeNew(void)
+Branch *
+BranchNew(void)
 {
-    return calloc(1, sizeof(Node));
+    return calloc(1, sizeof(Branch));
 }
 
 bool
-NodePush(Node *node, int height, int value)
+BranchPush(Branch *branch, int height, int value)
 {
     int last_slot;
-    int last_slot_length;
 
-    last_slot = node->length - 1;
-    if (last_slot == 0)
-        last_slot_length = node->size_table[last_slot];
-    else
-        last_slot_length = node->size_table[last_slot] -
-                           node->size_table[last_slot - 1];
+    last_slot = branch->length - 1;
+    if
+    (
+        branch->length != 0 &&
+        NodePush(branch->slots[last_slot], height - 1, value)
+    )   /* Could push in last slot */
+        branch->size_table[last_slot]++;
+    else if (branch->length != BRANCH_FACTOR)
+    {   /* Can allocate new slot and push there */
+        branch->slots[branch->length] = NodeNew(height - 1);
+        NodePush(branch->slots[branch->length], height - 1, value);
 
-    if (height == 1)
-    {   /* Children are leaf nodes */
-        if (node->length != 0 && last_slot_length != BRANCH_FACTOR)
-        {   /* Can push in last slot */
-            LeafSet(node->slots[last_slot], last_slot_length, value);
-
-            node->size_table[last_slot]++;
-        }
-        else if (node->length != BRANCH_FACTOR)
-        {   /* Can allocate new slot and push there */
-            node->slots[node->length] = LeafNew();
-            LeafSet(node->slots[node->length], 0, value);
-
-            node->size_table[node->length] = node->size_table[last_slot] + 1;
-            node->length++;
-        }
-        else /* Value cannot be pushed in the children of this node */
-            return false;
+        branch->size_table[branch->length] = branch->size_table[last_slot] + 1;
+        branch->length++;
     }
-    else
-    {   /* Children are branch nodes */
-        if
-        (
-            node->length != 0 &&
-            NodePush(node->slots[last_slot], height - 1, value)
-        )   /* Could push to insert in last slot */
-            node->size_table[last_slot]++;
-        else if (node->length != BRANCH_FACTOR)
-        {   /* Can allocate new slot and push there */
-            node->slots[node->length] = NodeNew();
-            NodePush(node->slots[node->length], height - 1, value);
-
-            node->size_table[node->length] = node->size_table[last_slot] + 1;
-            node->length++;
-        }
-        else /* Value cannot be pushed in the children of this node */
-            return false;
-    }
+    else /* Value cannot be pushed in the children of this branch */
+        return false;
 
     return true;
 }
@@ -124,42 +133,26 @@ TreeNew(void)
 void
 TreeHeighten(Tree *tree)
 {
-    Node *node;
+    Branch *branch;
 
-    node = NodeNew();
-    node->length = 1;
-    node->size_table[0] = tree->length;
-    node->slots[0] = tree->root;
+    branch = BranchNew();
+    branch->length = 1;
+    branch->size_table[0] = tree->length;
+    branch->slots[0] = tree->root;
 
     tree->height++;
-    tree->root = node;
+    tree->root = branch;
 }
 
 void
 TreePush(Tree *tree, int value)
 {
-    if (tree->height == 0)
-    {   /* Root is a leaf node */
-        if (tree->length != BRANCH_FACTOR)
-        {
-            if (tree->length == 0)
-                tree->root = LeafNew();
-
-            LeafSet(tree->root, tree->length, value);
-        }
-        else
-        {   /* Not enough space in the root leaf, allocate new branch */
-            TreeHeighten(tree);
-            NodePush(tree->root, tree->height, value);
-        }
-    }
-    else
-    {
-        if (!NodePush(tree->root, tree->height, value))
-        {   /* Could not push value in current root node, heighten tree */
-            TreeHeighten(tree);
-            NodePush(tree->root, tree->height, value);
-        }
+    if (tree->length == 0)
+        tree->root = LeafNew();
+    if (!NodePush(tree->root, tree->height, value))
+    {   /* Could not push value in current root node, heighten tree */
+        TreeHeighten(tree);
+        NodePush(tree->root, tree->height, value);
     }
 
     tree->length++;
@@ -193,51 +186,41 @@ ArrPrint(int *arr, int length)
 }
 
 void
-NodePrint(Node *node, int height, int indent)
+LeafPrint(Leaf *leaf)
+{
+    ArrPrint(leaf->slots, leaf->length);
+}
+
+void
+BranchPrint(Branch *branch, int height, int indent)
 {
     int i;
 
-    printf("[ length: %i\n", node->length);
+    printf("[ length: %i\n", branch->length);
 
     print_indent(indent);
     printf(", size_table: ");
-    ArrPrint(node->size_table, node->length);
+    ArrPrint(branch->size_table, branch->length);
 
     print_indent(indent);
     printf(", slots -> ");
 
-    if (node->length == 0)
+    if (branch->length == 0)
         printf("[ ]\n");
     else
     {
-        for (i = 0; i < node->length - 1; i++)
+        for (i = 0; i < branch->length - 1; i++)
         {
             if (height == 1)
-            {
-                int leaf_length;
-
-                if (i == 0)
-                    leaf_length = node->size_table[0];
-                else
-                    leaf_length = node->size_table[i] - node->size_table[i - 1];
-                ArrPrint(node->slots[i], leaf_length);
-            }
+                LeafPrint(branch->slots[i]);
             else
-                NodePrint(node->slots[i], height - 1, indent + 11);
+                BranchPrint(branch->slots[i], height - 1, indent + 11);
             print_indent(indent + 11); 
         }
         if (height == 1)
-        {
-            int leaf_length;
-
-            if (i == 0)
-                leaf_length = node->size_table[0];
-            else
-                leaf_length = node->size_table[i] - node->size_table[i - 1];
-            ArrPrint(node->slots[i], leaf_length);
-        }
+            LeafPrint(branch->slots[i]);
         else
-            NodePrint(node->slots[i], height - 1, indent + 11);
+            BranchPrint(branch->slots[i], height - 1, indent + 11);
         print_indent(indent);
         printf("]\n");
     }
@@ -251,9 +234,9 @@ TreePrint(Tree *tree)
     printf(", root -> ");
 
     if (tree->height == 0)
-        ArrPrint(tree->root, tree->length);
+        LeafPrint(tree->root);
     else
-        NodePrint(tree->root, tree->height, 10);
+        BranchPrint(tree->root, tree->height, 10);
 
     printf("]\n");
 }
@@ -290,7 +273,6 @@ main()
     TreePush(t, 61);
     TreePush(t, 67);
     TreePush(t, 71);
-
     TreePrint(t);
 }
 
