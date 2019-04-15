@@ -1,8 +1,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <assert.h>
 
-#define BRANCH_FACTOR 8
+#define BRANCH_FACTOR 4
+#define SHIFT_BITS 2
 #define SHIFT_MASK 0b11
 
 typedef struct Tree Tree;
@@ -19,6 +21,7 @@ struct Tree
 Tree *TreeNew(void);
 void  TreeHeighten(Tree *tree);
 void  TreePush(Tree *tree, int value);
+ int  TreeGet(Tree *tree, int index);
 
 struct Branch
 {
@@ -28,23 +31,25 @@ struct Branch
 };
 
 Branch *BranchNew(void);
-bool  BranchPush(Branch *branch, int height, int value);
+  bool  BranchPush(Branch *branch, int height, int value);
+   int  BranchGet(Branch *branch, int height, int index);
 
 struct Leaf
 {
     int length;
-    int *slots;
+    int slots[BRANCH_FACTOR];
 };
 
 Leaf *LeafNew(void);
 bool  LeafPush(Leaf *leaf, int value);  
+ int  LeafGet(Leaf *leaf, int index);
 
 /* UTIL */
 
 int
 shift_index(int index, int shift_by)
 {
-    return (index >> (BRANCH_FACTOR * shift_by)) & SHIFT_MASK;
+    return (index >> (SHIFT_BITS * shift_by)) & SHIFT_MASK;
 }
 
 void *
@@ -54,9 +59,15 @@ NodeNew(int height)
 }
 
 bool
-NodePush(void *child, int height, int value)
+NodePush(void *node, int height, int value)
 {
-    return height ? BranchPush(child, height, value) : LeafPush(child, value);
+    return height ? BranchPush(node, height, value) : LeafPush(node, value);
+}
+
+int
+NodeGet(void *node, int height, int index)
+{
+    return height ? BranchGet(node, height, index) : LeafGet(node, index);
 }
 
 /* LEAF */
@@ -64,13 +75,7 @@ NodePush(void *child, int height, int value)
 Leaf *
 LeafNew(void)
 {
-    Leaf *leaf;
-
-    leaf = malloc(sizeof(Leaf));
-    leaf->length = 0;
-    leaf->slots = malloc(sizeof(int) * BRANCH_FACTOR);
-
-    return leaf;
+    return calloc(1, sizeof(Leaf));
 }
 
 bool
@@ -86,6 +91,12 @@ LeafPush(Leaf *leaf, int value)
     }
     else /* No space left in leaf */
         return false;
+}
+
+int
+LeafGet(Leaf *leaf, int index)
+{
+    return leaf->slots[index];
 }
 
 /* NODE */
@@ -120,6 +131,24 @@ BranchPush(Branch *branch, int height, int value)
         return false;
 
     return true;
+}
+
+int
+BranchGet(Branch *branch, int height, int index)
+{
+    int shifted_index;
+
+    shifted_index = shift_index(index, height);
+    if (shifted_index == 0)
+        return NodeGet(branch->slots[0], height - 1, index);
+    else
+    {   /* Check the index and adjust if neccesary */
+        while (index > branch->size_table[shifted_index])
+            shifted_index++;
+        return NodeGet(branch->slots[shifted_index],
+                       height - 1,
+                       index - branch->size_table[shifted_index - 1]);
+    }
 }
 
 /* TREE */
@@ -158,7 +187,23 @@ TreePush(Tree *tree, int value)
     tree->length++;
 }
 
+int
+TreeGet(Tree *tree, int index)
+{
+    assert(index < tree->length);
+    return NodeGet(tree->root, tree->height, index);
+}
+
 /* MISC */
+
+void
+TreePushArray(Tree *tree, int arr_len, int *arr)
+{
+    int i;
+
+    for (i = 0; i < arr_len; i++)
+        TreePush(tree, arr[i]);
+}
 
 void
 print_indent(int indent)
@@ -243,36 +288,24 @@ TreePrint(Tree *tree)
 
 #undef BRANCH_FACTOR
 
+int primes[] = {  2,   3,   5,   7,  11,  13,  17,  19,  23,  29,
+                 31,  37,  41,  43,  47,  53,  59,  61,  67,  71,
+                 73,  79,  83,  89,  97, 101, 103, 107, 109, 113,
+                127, 131, 137, 139, 149, 151, 157, 163, 167, 173,
+                179, 181, 191, 193, 197, 199, 211, 223, 227, 229,
+                233, 239, 241, 251, 257, 263, 269, 271, 277, 281,
+                283, 293, 307, 311, 313, 317, 331, 337, 347, 349,
+                353, 359, 367, 373, 379, 383, 389, 397, 401, 409,
+                419, 421, 431, 433, 439, 443, 449, 457, 461, 463,
+                467, 479, 487, 491, 499, 503, 509, 521, 523, 541};
+
 int
 main()
 {
     Tree *t;
 
     t = TreeNew();
-    TreePush(t, 2);
-    TreePush(t, 3);
-    TreePush(t, 5);
-    TreePush(t, 7);
-
-    TreePush(t, 11);
-    TreePush(t, 13);
-    TreePush(t, 17);
-    TreePush(t, 19);
-
-    TreePush(t, 23);
-    TreePush(t, 29);
-    TreePush(t, 31);
-    TreePush(t, 37);
-
-    TreePush(t, 41);
-    TreePush(t, 43);
-    TreePush(t, 47);
-    TreePush(t, 53);
-
-    TreePush(t, 59);
-    TreePush(t, 61);
-    TreePush(t, 67);
-    TreePush(t, 71);
-    TreePrint(t);
+    TreePushArray(t, 100, primes);
+    printf("77: %i\n", TreeGet(t, 77));
 }
 
