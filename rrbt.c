@@ -22,6 +22,7 @@ Tree *TreeNew(void);
 void  TreeHeighten(Tree *tree);
 void  TreePush(Tree *tree, int value);
  int  TreeGet(Tree *tree, int index);
+void  TreeSet(Tree *tree, int index, int value);
 
 struct Branch
 {
@@ -33,6 +34,7 @@ struct Branch
 Branch *BranchNew(void);
   bool  BranchPush(Branch *branch, int height, int value);
    int  BranchGet(Branch *branch, int height, int index);
+  void  BranchSet(Branch *branch, int height, int index, int value);
 
 struct Leaf
 {
@@ -43,6 +45,7 @@ struct Leaf
 Leaf *LeafNew(void);
 bool  LeafPush(Leaf *leaf, int value);  
  int  LeafGet(Leaf *leaf, int index);
+void  LeafSet(Leaf *leaf, int index, int value);
 
 /* UTIL */
 
@@ -70,6 +73,11 @@ NodeGet(void *node, int height, int index)
     return height ? BranchGet(node, height, index) : LeafGet(node, index);
 }
 
+void NodeSet(void *node, int height, int index, int value)
+{
+    return height ? BranchSet(node, height, index, value) :
+                    LeafSet(node, index, value);
+}
 /* LEAF */
 
 Leaf *
@@ -97,6 +105,12 @@ int
 LeafGet(Leaf *leaf, int index)
 {
     return leaf->slots[index];
+}
+
+void
+LeafSet(Leaf *leaf, int index, int value)
+{
+    leaf->slots[index] = value;
 }
 
 /* NODE */
@@ -139,16 +153,35 @@ BranchGet(Branch *branch, int height, int index)
     int shifted_index;
 
     shifted_index = shift_index(index, height);
+    /* Check the index and adjust if neccesary */
+    while (index > branch->size_table[shifted_index])
+        shifted_index++;
+
     if (shifted_index == 0)
         return NodeGet(branch->slots[0], height - 1, index);
     else
-    {   /* Check the index and adjust if neccesary */
-        while (index > branch->size_table[shifted_index])
-            shifted_index++;
         return NodeGet(branch->slots[shifted_index],
                        height - 1,
                        index - branch->size_table[shifted_index - 1]);
-    }
+}
+
+void
+BranchSet(Branch *branch, int height, int index, int value)
+{
+    int shifted_index;
+
+    shifted_index = shift_index(index, height);
+    /* Check the index and adjust if neccesary */
+    while (index > branch->size_table[shifted_index])
+        shifted_index++;
+
+    if (shifted_index == 0)
+        NodeSet(branch->slots[0], height - 1, index, value);
+    else
+        NodeSet(branch->slots[shifted_index],
+                height - 1,
+                index - branch->size_table[shifted_index - 1],
+                value);
 }
 
 /* TREE */
@@ -194,7 +227,12 @@ TreeGet(Tree *tree, int index)
     return NodeGet(tree->root, tree->height, index);
 }
 
-/* MISC */
+void
+TreeSet(Tree *tree, int index, int value)
+{
+    assert(index < tree->length);
+    return NodeSet(tree->root, tree->height, index, value);
+}
 
 void
 TreePushArray(Tree *tree, int arr_len, int *arr)
@@ -204,6 +242,8 @@ TreePushArray(Tree *tree, int arr_len, int *arr)
     for (i = 0; i < arr_len; i++)
         TreePush(tree, arr[i]);
 }
+
+/* MISC */
 
 void
 print_indent(int indent)
@@ -306,6 +346,9 @@ main()
 
     t = TreeNew();
     TreePushArray(t, 100, primes);
+    printf("77: %i\n", TreeGet(t, 77));
+
+    TreeSet(t, 77, 77);
     printf("77: %i\n", TreeGet(t, 77));
 }
 
