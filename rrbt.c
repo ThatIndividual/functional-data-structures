@@ -45,6 +45,8 @@ Branch *BranchNew(void);
    int  BranchGet(Branch *branch, int height, int index);
   void  BranchSet(Branch *branch, int height, int index, int value);
   void  BranchPushNode(Branch *parent, int child_len, void *child);
+  void  BranchPushBranch(Branch *parent, Branch *child);
+  void  BranchPushLeaf(Branch *paret, Leaf *leaf);
 
 branch_pair BranchLowConcat(Branch *left, Branch *right);
 
@@ -68,19 +70,21 @@ shift_index(int index, int shift_by)
     return (index >> (SHIFT_BITS * shift_by)) & SHIFT_MASK;
 }
 
+/*
+Here `compactness' is defined as the number of steps we have to take (on
+average) after the initial index shift to find the slot containig the index
+we're looking for.
+
+A tree with a compactness of 0 would degenerate into a non-relaxed radix
+balanced trie, and in order to maintain it, we would have to always compact.
+
+A tree with a compactness of 2 on the other hand, would trigger compacting less
+often, but on average we have to do a 2 step linear search to find the slot we
+are looking for.
+*/
+
 int
 compactness(int nodes, int slots)
-/*  Here `compactness' is defined as the number of steps we have to take (on
-    average) after the initial index shift to find the slot containig the index
-    we're looking for.
-
-    A tree with a compactness of 0 would degenerate into a non-relaxed radix
-    balanced trie, and in order to maintain it, we would have to always
-    compact.
-
-    A tree with a compactness of 2 on the other hand, would trigger compacting
-    less often, but on average we have to do a 2 step linear search to find the
-    slot we are looking for. */
 {
     return nodes - ((slots - 1) / BRANCH_FACTOR) - 1;
 }
@@ -98,6 +102,7 @@ The amount of leafs to merge is specified by `length'. Note that a buffer
 overrun will happen if `dst' does not have enough space to store all the
 resulting leafs.
 */
+
 void
 squash_leafs(Leaf **src, Leaf **dst, int length)
 {
@@ -298,6 +303,12 @@ BranchPush(Branch *branch, int height, int value)
 
     return true;
 }
+
+void
+BranchPushBranch(Branch *parent, Branch *child);
+
+void
+BranchPushLeaf(Branch *paret, Leaf *leaf);
 
 int
 BranchGet(Branch *branch, int height, int index)
@@ -630,24 +641,19 @@ main()
     BranchPushNode(branch_2, leaf_5->length, leaf_5);
     BranchPushNode(branch_2, leaf_6->length, leaf_6);
 
-    //branch_pair brcon;
-    //brcon = BranchLowConcat(branch_1, branch_2);
-    //BranchPrint(brcon.left, 1, 0);
-    //BranchPrint(brcon.right, 1, 0);
-
     tree_1 = TreeNew();
     tree_1->length = 6;
     tree_1->height = 1;
     tree_1->root = branch_1;
     TreePrint(tree_1);
-    puts("");
+    printf("\n\n");
 
     tree_2 = TreeNew();
     tree_2->length = 10;
     tree_2->height = 1;
     tree_2->root = branch_2;
     TreePrint(tree_2);
-    puts("");
+    printf("\n\n");
 
     tree_result = TreeConcat(tree_1, tree_2);
     TreePrint(tree_result);
