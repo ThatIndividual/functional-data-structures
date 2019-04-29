@@ -44,10 +44,9 @@ Branch *BranchNew(void);
   bool  BranchPush(Branch *branch, int height, int value);
    int  BranchGet(Branch *branch, int height, int index);
   void  BranchSet(Branch *branch, int height, int index, int value);
-  void  BranchPushNode(Branch *parent, int child_len, void *child);
-  void  BranchPushBranch(Branch *parent, Branch *child);
-  void  BranchPushLeaf(Branch *paret, Leaf *leaf);
+  bool  BranchPushNode(Branch *parent, void *child, int child_len);
 
+branch_pair BranchHighConcat(Branch *left, Branch *right);
 branch_pair BranchLowConcat(Branch *left, Branch *right);
 
 struct Leaf
@@ -106,24 +105,31 @@ resulting leafs.
 void
 squash_leafs(Leaf **src, Leaf **dst, int length)
 {
-    bool pushed;
-    int node, slot;
-    Leaf *leaf;
+    int node_i, // index into the `src' leaf array
+        slot_i; // index into the curent leaf's slot array
+    Leaf *leaf; // leaf in which the item of the loose leafs are squashed
 
     if (length == 0)
         return;
 
     leaf = LeafNew();
-    for (node = 0; node < length; node++)
+    for (node_i = 0; node_i < length; node_i++)
     {
-        for (slot = 0; slot < src[node]->length; slot++)
+        Leaf *curr_leaf;
+       
+        curr_leaf = src[node_i];
+        for (slot_i = 0; slot_i < curr_leaf->length; slot_i++)
         {
-            pushed = LeafPush(leaf, src[node]->slots[slot]);
+            bool pushed;   // managed to push a value into the squashing leaf
+            int curr_item; 
+
+            curr_item = curr_leaf->slots[slot_i];
+            pushed = LeafPush(leaf, curr_item);
             if (!pushed)
             {
                 *dst++ = leaf;
                 leaf = LeafNew();
-                LeafPush(leaf, src[node]->slots[slot]);
+                LeafPush(leaf, curr_item);
             }
         }
     }
@@ -132,20 +138,87 @@ squash_leafs(Leaf **src, Leaf **dst, int length)
         *dst = leaf;
 }
 
-Leaf **
-merge_leafs(Leaf **src, int src_len, int to_remove)
-/*  Given an array of leafs, merge them until we are left with `to_remove'
-    fewer nodes. For example, passing the following `src' with a `to_remove'
-    of 1, would return the following `ret' leaf array.
+void
+squash_branches(Branch **src, Branch **dst, int length)
+{
+    int node_i,
+        slot_i;
+    Branch *branch;
+
+    if (length == 0)
+        return;
+
+    branch = BranchNew();
+    for (node_i = 0; node_i < length; node_i++)
+    {
+        Branch *curr_branch;
+
+        curr_branch = src[node_i];
+        for (slot_i = 0; slot_i < curr_branch->length; slot_i++)
+        {
+            bool pushed;
+            int curr_slot_len;
+            void *curr_slot;
+
+            if (slot_i)
+                curr_slot_len = curr_branch->size_table[slot_i] -
+                                curr_branch->size_table[slot_i - 1];
+            else
+                curr_slot_len = curr_branch->size_table[slot_i];
+
+            curr_slot = curr_branch->slots[slot_i];
+            pushed = BranchPushNode(branch, curr_slot, curr_slot_len);
+            if (!pushed)
+            {
+                *dst++ = branch;
+                branch = BranchNew();
+                BranchPushNode(branch, curr_slot, curr_slot_len);
+            }
+        }
+    }
+
+    if (branch-length)
+        *dst = branch;
+}
+
+/*
+Given an array of leafs, merge them until we are left with `to_remove' fewer
+nodes. For example, passing the following `src' with a `to_remove' of 1, would
+return the following `ret' leaf array.
 
          0┌──┬──┬──┬──┐1┌──┬──┐2┌──┬──┬──┐3┌──┬──┐4┌──┬──┐5┌──┬──┬──┐6
      src  │ 1│ 2│ 3│ 4│ │ 5│ 6│ │ 7│ 8│ 9│ │10│11│ │12│13│ │14│15│16│
           └──┴──┴──┴──┘ └──┴──┘ └──┴──┴──┘ └──┴──┘ └──┴──┘ └──┴──┴──┘
           0┌──┬──┬──┬──┐1┌──┬──┬──┬──┐2┌──┬──┬──┐3┌──┬──┐4┌──┬──┬──┐5
       ret  │ 1│ 2│ 3│ 4│ │ 5│ 6│ 7│ 8│ │ 9│10│11│ │12│13│ │14│15│16│
-           └──┴──┴──┴──┘ └──┴──┴──┴──┘ └──┴──┴──┘ └──┴──┘ └──┴──┴──┘ */
+           └──┴──┴──┴──┘ └──┴──┴──┴──┘ └──┴──┴──┘ └──┴──┘ └──┴──┴──┘
+
+After we have reached the first node with free slots. Starting from this index,
+we probe forwards until we have selected a run of nodes that, once squashed
+together, would leave us with `to_remove' fewer nodes.  Meaning:
+
+XXX formnulas wrong XXX
+
+⌊selected slots / branching factor⌋ ≤ selected nodes - merge amount
+
+Continuing with the above example:
+
+1┌──┬──┐2┌──┬──┬──┐3            for a run of 2:
+ │ 5│ 6│ │ 7│ 8│ 9│             ⌊5 / 4⌋ ≰ 2 - 1
+ └──┴──┘ └──┴──┴──┘   
+1┌──┬──┐2┌──┬──┬──┐3┌──┬──┐4    for a run of 3:
+ │ 5│ 6│ │ 7│ 8│ 9│ │10│11│     ⌊7 / 4⌋ ≤ 3 - 1
+ └──┴──┘ └──┴──┴──┘ └──┴──┘
+
+Thus, we can satisfy a `to_remove' constraint of 1 by squashing leafs indexes
+1 to 4.
+*/
+
+Leaf **
+merge_leafs(Leaf **src, int src_len, int to_remove)
 {
-    int src_i, ret_i;
+    int src_i,
+        ret_i;
     Leaf **ret;
 
     if (to_remove == 0)
@@ -157,26 +230,10 @@ merge_leafs(Leaf **src, int src_len, int to_remove)
     while (src[src_i]->length == BRANCH_FACTOR)
         ret[ret_i++] = src[src_i++];
 
-    /*  We have reached the first node with free slots. Starting from this
-        index, we probe forwards until we have selected a run of nodes that,
-        once squashed together, would leave us with `to_remove' fewer nodes.
-        Meaning:
-
-        ⌊selected slots / br. factor⌋ ≤ selected nodes - merge amount
-
-        Continuing with the above example:
-
-        1┌──┬──┐2┌──┬──┬──┐3            for a run of 2:
-         │ 5│ 6│ │ 7│ 8│ 9│             ⌊5 / 4⌋ ≰ 2 - 1
-         └──┴──┘ └──┴──┴──┘   
-        1┌──┬──┐2┌──┬──┬──┐3┌──┬──┐4    for a run of 3:
-         │ 5│ 6│ │ 7│ 8│ 9│ │10│11│     ⌊7 / 4⌋ ≤ 3 - 1
-         └──┴──┘ └──┴──┴──┘ └──┴──┘
-
-        Thus, we can satisfy a `to_remove' constraint of 1 by squashing leafs
-        indexes 1 to 4. */
     {
-        int selected_nodes, selected_slots, squashed_nodes;
+        int selected_nodes,
+            selected_slots,
+            squashed_nodes;
 
         selected_nodes = 2;
         selected_slots = src[src_i]->length;
@@ -189,6 +246,53 @@ merge_leafs(Leaf **src, int src_len, int to_remove)
             if (squashed_nodes <= selected_nodes - to_remove)
             {
                 squash_leafs(src + src_i, ret + src_i, selected_nodes);
+                src_i += selected_nodes;
+                ret_i += squashed_nodes;
+                break;
+            }
+            else
+                selected_nodes++;
+        }
+    }
+
+    while (src_i < src_len)
+        ret[ret_i++] = src[src_i++];
+
+    return ret;
+}
+
+Branch **
+merge_branches(Branch **src, int src_len, int to_remove)
+{
+    int src_i,
+        ret_i;
+    Branch **ret;
+
+    if (to_remove == 0)
+        return src;
+
+    src_i = ret_i = 0;
+    ret = malloc(sizeof(Branch *) * (src_len - to_remove));
+
+    while (src[src_i]->length == BRANCH_FACTOR)
+        ret[ret_i++] = src[src_i++];
+
+    {
+        int selected_nodes,
+            selected_slots,
+            squashed_nodes;
+
+        selected_nodes = 2;
+        selected_slots = src[src_i]->length;
+        while (true)
+        {
+            assert(selected_nodes + src_i <= src_len);
+
+            selected_slots += src[src_i + selected_nodes - 1]->length;
+            squashed_nodes = ((selected_slots - 1) / BRANCH_FACTOR) + 1;
+            if (squashed_nodes <= selected_nodes - to_remove)
+            {
+                squash_branches(src + src_i, ret + src_i, selected_nodes);
                 src_i += selected_nodes;
                 ret_i += squashed_nodes;
                 break;
@@ -304,12 +408,6 @@ BranchPush(Branch *branch, int height, int value)
     return true;
 }
 
-void
-BranchPushBranch(Branch *parent, Branch *child);
-
-void
-BranchPushLeaf(Branch *paret, Leaf *leaf);
-
 int
 BranchGet(Branch *branch, int height, int index)
 {
@@ -347,41 +445,38 @@ BranchSet(Branch *branch, int height, int index, int value)
                 value);
 }
 
-void
-BranchPushNode(Branch *parent, int child_len, void *child)
+bool
+BranchPushNode(Branch *parent, void *child, int child_len)
 {
-    assert(parent->length != BRANCH_FACTOR);
+    if (parent->length == BRANCH_FACTOR)
+        return false;
 
     parent->slots[parent->length] = child;
     if (parent->length == 0)
         parent->size_table[0] = child_len;
     else
         parent->size_table[parent->length] =
-            parent->size_table[parent->length - 1] + child_len;
+                parent->size_table[parent->length - 1] + child_len;
     parent->length++;
-}
 
-void
-BranchPushLeaf(Branch *parent, Leaf *leaf)
-{
-    assert(parent->length != BRANCH_FACTOR);
-
-    parent->slots[parent->length] = leaf;
-    if (parent->length == 0)
-        parent->size_table[0] = leaf->length;
-    else
-        parent->size_table[parent->length] =
-                parent->size_table[parent->length - 1] + leaf->length;
-    parent->length++;
+    return true;
 }
 
 branch_pair
 BranchLowConcat(Branch *left, Branch *right)
 {
-    int num_nodes, num_slots, to_remove, left_len, right_len, i;
-    Leaf **leafs, **curr_leaf, **merged_leafs;
+    int num_nodes,
+        num_slots,
+        to_remove,
+        left_len,
+        right_len,
+        i;
+    Leaf **leafs,
+         **curr_leaf,
+         **merged_leafs;
     branch_pair ret;
 
+    /* marshall nodes to array */
     num_nodes = left->length + right->length;
     leafs = malloc(sizeof(Leaf *) * num_nodes);
     curr_leaf = leafs;
@@ -396,8 +491,16 @@ BranchLowConcat(Branch *left, Branch *right)
         num_slots += leafs[i]->length;
 
     to_remove = compactness(num_nodes, num_slots) - AVG_COMPACT;
+    if (to_remove == 0)
+    {   /* the branches do not require compacting */
+        ret.left = left;
+        ret.right = right;
+        free(leafs);
+        return ret;
+    }
     merged_leafs = merge_leafs(leafs, num_nodes, to_remove);
 
+    /* unmarshall leafs to branch pair */
     num_nodes -= to_remove;
     right_len = num_nodes > BRANCH_FACTOR ? num_nodes - BRANCH_FACTOR : 0;
     left_len = num_nodes - right_len;
@@ -405,13 +508,15 @@ BranchLowConcat(Branch *left, Branch *right)
     {
         ret.left = BranchNew();
         for (i = 0; i < left_len; i++)
-            BranchPushLeaf(ret.left, merged_leafs[i]);
+            BranchPushNode(ret.left, merged_leafs[i], merged_leafs[i]->length);
 
         if (right_len)
         {
             ret.right = BranchNew();
             for (i = 0; i < right_len; i++)
-                BranchPushLeaf(ret.right, merged_leafs[left_len + i]);
+                BranchPushNode(ret.right,
+                               merged_leafs[left_len + i],
+                               merged_leafs[left_len + i]->length);
         }
         else
             ret.right = NULL;
@@ -419,6 +524,7 @@ BranchLowConcat(Branch *left, Branch *right)
     else
         ret.left = ret.right = NULL;
 
+    free(leafs);
     return ret;
 }
 
@@ -491,8 +597,8 @@ TreeConcat(Tree *left, Tree *right)
             Branch *new_root;
 
             new_root = BranchNew();
-            BranchPushNode(new_root, result.left->length, result.left);
-            BranchPushNode(new_root, result.right->length, result.right);
+            BranchPushNode(new_root, result.left, result.left->length);
+            BranchPushNode(new_root, result.right, result.right->length);
 
             new_tree->length = new_root->length;
             new_tree->height = 2;
@@ -606,6 +712,9 @@ TreePrint(Tree *tree)
 }
 
 #undef BRANCH_FACTOR
+#undef SHIFT_BITS
+#undef SHIFT_MASK
+#undef AVG_COMPACT
 
 int primes[] = {  2,   3,   5,   7,  11,  13,  17,  19,  23,  29,
                  31,  37,  41,  43,  47,  53,  59,  61,  67,  71,
@@ -628,18 +737,18 @@ main()
     branch_1 = BranchNew();
     leaf_1 = LeafNew(); LeafPushArray(leaf_1, 4, (int[]){ 1,  2,  3,  4});
     leaf_2 = LeafNew(); LeafPushArray(leaf_2, 2, (int[]){ 5,  6});
-    BranchPushNode(branch_1, leaf_1->length, leaf_1);
-    BranchPushNode(branch_1, leaf_2->length, leaf_2);
+    BranchPushNode(branch_1, leaf_1, leaf_1->length);
+    BranchPushNode(branch_1, leaf_2, leaf_2->length);
 
     branch_2 = BranchNew();
     leaf_3 = LeafNew(); LeafPushArray(leaf_3, 3, (int[]){ 7,  8, 9});
     leaf_4 = LeafNew(); LeafPushArray(leaf_4, 2, (int[]){10, 11});
     leaf_5 = LeafNew(); LeafPushArray(leaf_5, 2, (int[]){12, 13});
     leaf_6 = LeafNew(); LeafPushArray(leaf_6, 3, (int[]){14, 15, 16});
-    BranchPushNode(branch_2, leaf_3->length, leaf_3);
-    BranchPushNode(branch_2, leaf_4->length, leaf_4);
-    BranchPushNode(branch_2, leaf_5->length, leaf_5);
-    BranchPushNode(branch_2, leaf_6->length, leaf_6);
+    BranchPushNode(branch_2, leaf_3, leaf_3->length);
+    BranchPushNode(branch_2, leaf_4, leaf_4->length);
+    BranchPushNode(branch_2, leaf_5, leaf_5->length);
+    BranchPushNode(branch_2, leaf_6, leaf_6->length);
 
     tree_1 = TreeNew();
     tree_1->length = 6;
