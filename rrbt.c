@@ -177,7 +177,7 @@ squash_branches(Branch **src, Branch **dst, int length)
         }
     }
 
-    if (branch-length)
+    if (branch->length)
         *dst = branch;
 }
 
@@ -339,6 +339,19 @@ LeafNew(void)
     return calloc(1, sizeof(Leaf));
 }
 
+Leaf *
+LeafFromArr(int *arr, int arr_len)
+{
+    Leaf *leaf;
+    int i;
+
+    leaf = LeafNew();
+    for (i = 0; i < arr_len; i++)
+        LeafPush(leaf, arr[i]);
+
+    return leaf;
+}
+
 bool
 LeafPush(Leaf *leaf, int value)
 {
@@ -374,12 +387,39 @@ LeafPushArray(Leaf *leaf, int arr_len, int *arr)
     for (i = 0; i < arr_len; i++)
         LeafPush(leaf, arr[i]);
 }
+
 /* NODE */
 
 Branch *
 BranchNew(void)
 {
     return calloc(1, sizeof(Branch));
+}
+
+Branch *
+BranchFromLeafArr(Leaf *arr[], int arr_len)
+{
+    Branch *branch;
+    int i;
+
+    branch = BranchNew();
+    for (i = 0; i < arr_len; i++)
+        BranchPushNode(branch, arr[i], arr[i]->length);
+
+    return branch;
+}
+
+Branch *
+BranchFromBranchArr(Branch *arr[], int arr_len)
+{
+    Branch *branch;
+    int i;
+
+    branch = BranchNew();
+    for (i = 0; i < arr_len; i++)
+        BranchPushNode(branch, arr[i], arr[i]->length);
+
+    return branch;
 }
 
 bool
@@ -525,6 +565,72 @@ BranchLowConcat(Branch *left, Branch *right)
         ret.left = ret.right = NULL;
 
     free(leafs);
+    return ret;
+}
+
+branch_pair
+BranchHighConcat(Branch *left, Branch *right)
+{
+    int num_nodes,
+        num_slots,
+        to_remove,
+        left_len,
+        right_len,
+        i;
+    Branch **branches,
+           **curr_branch,
+           **merged_branches;
+    branch_pair ret;
+
+    num_nodes = left->length + right->length;
+    branches = malloc(sizeof(Branch *) * num_nodes);
+    curr_branch = branches;
+
+    for (i = 0; i < left->length; i++)
+        *curr_branch++ = left->slots[i];
+    for (i = 0; i < right->length; i++)
+        *curr_branch++ = right->slots[i];
+
+    num_slots = 0;
+    for (i = 0; i < num_nodes; i++)
+        num_slots += branches[i]->length;
+
+    to_remove = compactness(num_nodes, num_slots) - AVG_COMPACT;
+    if (to_remove == 0)
+    {
+        ret.left = left;
+        ret.right = right;
+        free(branches);
+        return ret;
+    }
+    merged_branches = merge_branches(branches, num_nodes, to_remove);
+
+    num_nodes -= to_remove;
+    right_len = num_nodes > BRANCH_FACTOR ? num_nodes - BRANCH_FACTOR : 0;
+    left_len = num_nodes - right_len;
+    if (left_len)
+    {
+        ret.left = BranchNew();
+        for (i = 0; i < left_len; i++)
+            BranchPushNode(ret.left,
+                           merged_branches[i],
+                           merged_branches[i]->length);
+
+        if (right_len)
+        {
+            ret.right = BranchNew();
+            for (i = 0; i < right_len; i++)
+                BranchPushNode(ret.right,
+                               merged_branches[left_len + i],
+                               merged_branches[left_len + i]->length);
+        }
+        else
+            ret.right = NULL;
+    }
+    else
+        ret.left = ret.right = NULL;
+
+    free(branches);
     return ret;
 }
 
@@ -734,21 +840,19 @@ main()
     Branch *branch_1, *branch_2;
     Leaf *leaf_1, *leaf_2, *leaf_3, *leaf_4, *leaf_5, *leaf_6;
 
-    branch_1 = BranchNew();
-    leaf_1 = LeafNew(); LeafPushArray(leaf_1, 4, (int[]){ 1,  2,  3,  4});
-    leaf_2 = LeafNew(); LeafPushArray(leaf_2, 2, (int[]){ 5,  6});
-    BranchPushNode(branch_1, leaf_1, leaf_1->length);
-    BranchPushNode(branch_1, leaf_2, leaf_2->length);
+    branch_1 =
+    BranchFromLeafArr((Leaf *[]){
+        LeafFromArr((int[]){1, 2, 3, 4}, 4),
+        LeafFromArr((int[]){5, 6}, 2),
+    }, 2);
 
-    branch_2 = BranchNew();
-    leaf_3 = LeafNew(); LeafPushArray(leaf_3, 3, (int[]){ 7,  8, 9});
-    leaf_4 = LeafNew(); LeafPushArray(leaf_4, 2, (int[]){10, 11});
-    leaf_5 = LeafNew(); LeafPushArray(leaf_5, 2, (int[]){12, 13});
-    leaf_6 = LeafNew(); LeafPushArray(leaf_6, 3, (int[]){14, 15, 16});
-    BranchPushNode(branch_2, leaf_3, leaf_3->length);
-    BranchPushNode(branch_2, leaf_4, leaf_4->length);
-    BranchPushNode(branch_2, leaf_5, leaf_5->length);
-    BranchPushNode(branch_2, leaf_6, leaf_6->length);
+    branch_2 =
+    BranchFromLeafArr((Leaf *[]){ 
+        LeafFromArr((int[]){7, 8, 9}, 3),
+        LeafFromArr((int[]){10, 11}, 2),
+        LeafFromArr((int[]){12, 13}, 2),
+        LeafFromArr((int[]){14, 15, 16}, 3),
+    }, 4);
 
     tree_1 = TreeNew();
     tree_1->length = 6;
